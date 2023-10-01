@@ -346,6 +346,7 @@ void addLoopFactor(){
     int loopKeyCur;
     int loopKeyPre;
     if(detectLoopFrameID(&loopKeyCur, &loopKeyPre)){
+        std::cout<<"找到候选帧"<<std::endl;
         pcl::PointCloud<PointType>::Ptr cureKeyframeCloud(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr prevKeyframeCloud(new pcl::PointCloud<PointType>());
         {
@@ -364,9 +365,11 @@ void addLoopFactor(){
         icp.setInputTarget(prevKeyframeCloud);
         pcl::PointCloud<PointType>::Ptr unused_result(new pcl::PointCloud<PointType>());
         icp.align(*unused_result);
-        if (icp.hasConverged() == false || icp.getFitnessScore() > 0.2)// 未收敛，或者匹配不够好
+        std::cout<<icp.getFitnessScore()<<std::endl;
+        if (icp.hasConverged() == false || icp.getFitnessScore() > 0.6)// 未收敛，或者匹配不够好
             return;
         // 闭环优化得到的当前关键帧与闭环关键帧之间的位姿变换
+        std::cout<<"匹配成功"<<std::endl;
         correctionLidarFrame=icp.getFinalTransformation().cast<double>();
         loopRecordIndex=loopRecordIndex+30;     //闭环成功后跳过30帧再判断闭环
         // 闭环优化前当前帧位姿
@@ -384,6 +387,66 @@ void addLoopFactor(){
                               gtsam::Point3(double(thisPoint.x),    double(thisPoint.y),     double(thisPoint.z)));
         gtsam::Vector Vector6(6);
         float noiseScore = icp.getFitnessScore();
+        Vector6 << noiseScore, noiseScore, noiseScore, noiseScore, noiseScore, noiseScore;
+        gtsam::noiseModel::Diagonal::shared_ptr constraintNoise = gtsam::noiseModel::Diagonal::Variances(Vector6);
+
+        loopIndexContainer[loopKeyCur] = loopKeyPre;
+        gtSAMgraph.add(gtsam::BetweenFactor<gtsam::Pose3>(loopKeyCur, loopKeyPre, poseFrom.between(poseTo), constraintNoise));
+        aLoopIsClosed = true;
+    }
+}
+
+void ndtAddLoopFactor(){
+    if (keyPose3DCloud->points.size()<5 || keyPose3DCloud->points.size()-1<=loopRecordIndex)
+        return;
+    int loopKeyCur;
+    int loopKeyPre;
+    if(detectLoopFrameID(&loopKeyCur, &loopKeyPre)){
+        std::cout<<"找到候选帧"<<std::endl;
+        pcl::PointCloud<PointType>::Ptr cureKeyframeCloud(new pcl::PointCloud<PointType>());
+        pcl::PointCloud<PointType>::Ptr prevKeyframeCloud(new pcl::PointCloud<PointType>());
+        {
+            getLoopLocalMap(cureKeyframeCloud, loopKeyCur, 0);   // 提取当前关键帧
+            getLoopLocalMap(prevKeyframeCloud, loopKeyPre, 10);  // 提取闭环匹配关键帧前后相邻若干帧
+            if (cureKeyframeCloud->size() < 300 || prevKeyframeCloud->size() < 1000)
+                return;
+        }
+
+       
+            // 创建NDT对象
+        static  pcl::NormalDistributionsTransform<PointType, PointType> ndt;
+
+            // 设置NDT参数
+        ndt.setTransformationEpsilon(0.01);
+         ndt.setStepSize(0.1);
+         ndt.setResolution(1.0);
+          // 设置输入点云
+         ndt.setInputSource(cureKeyframeCloud);
+        ndt.setInputTarget(prevKeyframeCloud);
+        pcl::PointCloud<PointType>::Ptr unused_result(new pcl::PointCloud<PointType>());
+        ndt.align(*unused_result);
+        std::cout<<ndt.getFitnessScore()<<std::endl;
+        if (ndt.hasConverged() == false || ndt.getFitnessScore() < 0.6)// 未收敛，或者匹配不够好
+            return;
+        // 闭环优化得到的当前关键帧与闭环关键帧之间的位姿变换
+        std::cout<<"匹配成功"<<std::endl;
+        correctionLidarFrame=ndt.getFinalTransformation().cast<double>();
+        loopRecordIndex=loopRecordIndex+30;     //闭环成功后跳过30帧再判断闭环
+        // 闭环优化前当前帧位姿
+        Eigen::Affine3d tWrong;
+        PointTypePose6D pt6d=keyPose6DCloud->points[loopKeyCur];
+        pcl::getTransformation(pt6d.x, pt6d.y, pt6d.z, pt6d.roll, pt6d.pitch, pt6d.yaw,tWrong);
+        // 闭环优化后当前帧位姿
+        Eigen::Affine3d tCorrect = correctionLidarFrame * tWrong;
+        double x, y, z, roll, pitch, yaw;
+        pcl::getTranslationAndEulerAngles (tCorrect, x, y, z, roll, pitch, yaw);
+        gtsam::Pose3 poseFrom = gtsam::Pose3(gtsam::Rot3::RzRyRx(roll, pitch, yaw), gtsam::Point3(x, y, z));
+        // 闭环匹配帧的位姿
+        PointTypePose6D thisPoint=keyPose6DCloud->points[loopKeyPre];
+        gtsam::Pose3 poseTo(gtsam::Rot3::RzRyRx(double(thisPoint.roll), double(thisPoint.pitch), double(thisPoint.yaw)),
+                              gtsam::Point3(double(thisPoint.x),    double(thisPoint.y),     double(thisPoint.z)));
+        gtsam::Vector Vector6(6);
+        float noiseScore = 1/ndt.getFitnessScore();
         Vector6 << noiseScore, noiseScore, noiseScore, noiseScore, noiseScore, noiseScore;
         gtsam::noiseModel::Diagonal::shared_ptr constraintNoise = gtsam::noiseModel::Diagonal::Variances(Vector6);
 
@@ -623,7 +686,8 @@ void mapOptimization(){
         addPose3D6D(arr6d[0],arr6d[1],arr6d[2],arr6d[3],arr6d[4],arr6d[5],timeOdom);
         keyFrameVector.push_back(*currFramePlanePtr);  // save key frame
         addOdomFactor();    // 激光里程计因子
-        addLoopFactor();    // 闭环因子
+        //addLoopFactor();    // 闭环因子
+        ndtAddLoopFactor();
         runOptimize();      // 执行优化
         correctPoses();     // 更新里程计
         publishResult();
@@ -682,9 +746,9 @@ void cloudThread(){
             T_fodom_0_curr.pretranslate(t_fodom_0_curr);
             T_map_0_curr=trans_loop_adjust*T_fodom_0_curr;   // 闭环累计误差校正
             //使用gtsam
-            //mapOptimization();
+            mapOptimization();
             //使用g2o
-            g2o_mapOptimization();
+           // g2o_mapOptimization();
             isDone=1;
         }
     }
@@ -699,6 +763,7 @@ int main(int argc, char **argv) {
 
     ros::init(argc, argv, "MapOptmization");
     ros::NodeHandle nh;
+    //接收位姿和平面点点云
     sub_plane_frame_cloud = nh.subscribe<sensor_msgs::PointCloud2>("/plane_frame_cloud2", 10, planeCloudHandler);
     sub_frame_Odometry = nh.subscribe<nav_msgs::Odometry>("/frame_odom2", 100, odomHandler);
     pub_map_frame = nh.advertise<sensor_msgs::PointCloud2>("/map_frame_res3", 10);

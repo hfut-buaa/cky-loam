@@ -153,7 +153,8 @@ int main(int argc, char **argv) {
     ros::init(argc, argv, "FrameFeature");
     ros::NodeHandle nh;
     //订阅原始激光雷达数据
-    sub_lidar_frame_cloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 10, cloudHandler);
+    //sub_lidar_frame_cloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 10, cloudHandler);
+    sub_lidar_frame_cloud = nh.subscribe<sensor_msgs::PointCloud2>("/points_raw", 10, cloudHandler);
     //发布平面特征点云
     pub_plane_frame_cloud = nh.advertise<sensor_msgs::PointCloud2>("/plane_frame_cloud1", 100);
     //发布原始点云

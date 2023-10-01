@@ -32,7 +32,7 @@
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/ISAM2.h>
 #include <pcl/registration/icp.h>
-
+#include <pcl/registration/ndt.h>
 #include<chrono>
 #include<ctime>
 //sophus

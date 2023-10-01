@@ -58,7 +58,7 @@ return skew_mat;
 
 /**
  * 定义ceres优化中的代价函数(解析求导)
- * 点到平面的距离计算用向量表示
+ * 点到平面的距离计算用向量表示(点a和点o(当前帧的点))
  * 在同一坐标系中，两点间(po,pa)向量值与平面法向量(norm)的点乘可得到距离
  */
 
@@ -272,7 +272,7 @@ void frameRegistration(){
     int curr_plane_num=currFramePlanePtr->points.size();
     if(last_plane_num>10){
         kdTreePlanLast.setInputCloud(lastFramePlanePtr);
-        for(int i_opt=0;i_opt<2;i_opt++){
+        //for(int i_opt=0;i_opt<2;i_opt++){
             for (int i = 0; i < curr_plane_num; ++i) {    //遍历当前帧各平面点
                 PointType pointSeed;
                 //将当前帧此平面点坐标变换到上一帧坐标系中
@@ -295,7 +295,7 @@ void frameRegistration(){
                 for (size_t i_kd = 0; i_kd < indx2.size(); ++i_kd) {
                     float f_indx=lastFramePlanePtr->points[indx2[i_kd]].intensity;
                     int i_indx=int(f_indx);
-                    int row=100*(f_indx-i_indx+0.002);   //获取点索引
+                    int row=100*(f_indx-i_indx+0.002);   //获取点所在线束
                     if(i_kd==0){
                         p_row=row;
                     }
@@ -358,7 +358,7 @@ void frameRegistration(){
                     }                    
                 }
             }
-        }
+        //}
         //设置优化参数，并优化
          clock_t time_start =clock();
         ceres::Solver::Options options;
