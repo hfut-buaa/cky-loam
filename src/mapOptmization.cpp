@@ -26,6 +26,7 @@ typedef Eigen::Matrix<double ,6,6> Matrix6d;
 typedef Eigen::Matrix<double, 6, 1> Vector6d;
 
 ros::Subscriber sub_plane_frame_cloud;    //接收平面特征点云
+//ros::Subscriber sub_edge_frame_cloud;    //接收线特征点云
 ros::Subscriber sub_frame_Odometry;       //接收激光里程计
 ros::Publisher pub_sum_map_cloud;         //发布里程计优化后的点云地图
 ros::Publisher pub_map_frame;             //发布里程计优化后的当前帧（坐标转换后）
@@ -46,6 +47,7 @@ pcl::VoxelGrid<PointType> downSizeFilterICP;
 pcl::VoxelGrid<PointType> downSizeFilterMap;
 std_msgs::Header currHead;
 std::queue<sensor_msgs::PointCloud2> planeQueue;    //定义点云消息队列
+
 std::queue<nav_msgs::Odometry> odometryQueue;       //定义里程计消息队列
 std::mutex mLock;
 double timePlane=0;
@@ -94,12 +96,21 @@ gtsam::ISAM2Params parameters;
 void planeCloudHandler(const sensor_msgs::PointCloud2ConstPtr &planeCloudMsg) {
     mLock.lock();
     planeQueue.push(*planeCloudMsg);
+    
     mLock.unlock();
 }
+
+// void edgeCloudHandler(const sensor_msgs::PointCloud2ConstPtr &edgeCloudMsg) {
+//     mLock.lock();
+//     edgeQueue.push(*edgeCloudMsg);
+//     mLock.unlock();
+
+// }
 
 void odomHandler(const nav_msgs::Odometry::ConstPtr &odomMsg){
     mLock.lock();
     odometryQueue.push(*odomMsg);
+   
     mLock.unlock();
 }
 
@@ -686,8 +697,8 @@ void mapOptimization(){
         addPose3D6D(arr6d[0],arr6d[1],arr6d[2],arr6d[3],arr6d[4],arr6d[5],timeOdom);
         keyFrameVector.push_back(*currFramePlanePtr);  // save key frame
         addOdomFactor();    // 激光里程计因子
-        //addLoopFactor();    // 闭环因子
-        ndtAddLoopFactor();
+        addLoopFactor();    // 闭环因子
+        //ndtAddLoopFactor();
         runOptimize();      // 执行优化
         correctPoses();     // 更新里程计
         publishResult();
@@ -721,6 +732,7 @@ void cloudThread(){
             currHead.stamp=planeQueue.front().header.stamp;
             timePlane=planeQueue.front().header.stamp.toSec();
             timeOdom=odometryQueue.front().header.stamp.toSec();
+            //std::cout<<"time diff:"<<std::fabs(timePlane-timeOdom)<<std::endl;
             if(std::fabs(timePlane-timeOdom)>0.005){             //时间同步判断
                 printf("frame time unsync messeage! \n");
                 mLock.unlock();
@@ -746,12 +758,34 @@ void cloudThread(){
             T_fodom_0_curr.pretranslate(t_fodom_0_curr);
             T_map_0_curr=trans_loop_adjust*T_fodom_0_curr;   // 闭环累计误差校正
             //使用gtsam
+            //std::cout<<"1"<<std::endl;
             mapOptimization();
             //使用g2o
            // g2o_mapOptimization();
             isDone=1;
         }
     }
+    //save pose txt
+    if(savePose)
+    {
+        std::ofstream foutTUM;
+        foutTUM.open("/home/cky/s_loam_ws/src/S-LOAM/traject/self.txt");
+        for(int i=0;i<keyPose6DCloud->points.size();i++)
+        {
+            Eigen::Vector3f ea(keyPose6DCloud->points[i].yaw ,keyPose6DCloud->points[i].pitch,keyPose6DCloud->points[i].roll);
+            Eigen::Quaternionf q;
+            q=Eigen::AngleAxisf(ea[0] ,Eigen::Vector3f::UnitZ()) *
+                 Eigen::AngleAxisf(ea[1] ,Eigen::Vector3f::UnitY()) *
+                Eigen::AngleAxisf(ea[2] ,Eigen::Vector3f::UnitX()) ;
+            float timeStamp =keyPose6DCloud->points[i].time-keyPose6DCloud->points[0].time;
+            foutTUM<<std::fixed<<std::setprecision(6) << timeStamp<<" "<< std::setprecision(9) << keyPose6DCloud->points[i].x <<
+             " " << keyPose6DCloud->points[i].y << " " << keyPose6DCloud->points[i].z << " " << q.x() << " " <<q.y() << " " << q.z() << " " <<q.w() <<std::endl;
+        }
+         foutTUM.close();
+    }
+
+
+
 }
 
 int main(int argc, char **argv) {
@@ -764,8 +798,10 @@ int main(int argc, char **argv) {
     ros::init(argc, argv, "MapOptmization");
     ros::NodeHandle nh;
     //接收位姿和平面点点云
-    sub_plane_frame_cloud = nh.subscribe<sensor_msgs::PointCloud2>("/plane_frame_cloud2", 10, planeCloudHandler);
-    sub_frame_Odometry = nh.subscribe<nav_msgs::Odometry>("/frame_odom2", 100, odomHandler);
+    sub_plane_frame_cloud = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_feature_last", 10, planeCloudHandler);
+    //sub_edge_frame_cloud  =nh.subscribe<sensor_msgs::PointCloud2("/laser_cloud_corner_last", 10, planeCloudHandler);
+     sub_frame_Odometry = nh.subscribe<nav_msgs::Odometry>("/laser_odom_to_init", 100, odomHandler);
+    //发送给rviz
     pub_map_frame = nh.advertise<sensor_msgs::PointCloud2>("/map_frame_res3", 10);
     pub_sum_map_cloud = nh.advertise<sensor_msgs::PointCloud2>("/sum_map_cloud_res3", 10);
     pub_map_odometry = nh.advertise<nav_msgs::Odometry>("/map_odom_res3", 100);
